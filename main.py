@@ -1,9 +1,11 @@
 import os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telethon import TelegramClient, events
 import boto3
 
-TOKEN = os.getenv("BOT_TOKEN")
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 R2_ACCESS = os.getenv("R2_ACCESS_KEY")
 R2_SECRET = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
@@ -17,20 +19,43 @@ s3 = boto3.client('s3',
     region_name='auto'
 )
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome to MovieLand! 🎬\nMovie එකක් එවන්න, මම Link එකක් දෙන්නම්.")
+client = TelegramClient('movieland_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("Uploading... ⏳ Please wait")
-    file = await update.message.video.get_file()
-    file_name = update.message.video.file_name or f"{update.message.video.file_id}.mp4"
-    local_path = f"/tmp/{file_name}"
-    await file.download_to_drive(local_path)
-    s3.upload_file(local_path, BUCKET, file_name)
-    link = f"{PUBLIC_URL}/{file_name}"
-    await msg.edit_text(f"✅ Uploaded!\n\n🎬 {file_name}\n\n🔗 Link: {link}")
+@client.on(events.NewMessage(pattern='/start'))
+async def start(event):
+    await event.reply("Welcome to MovieLand! 🎬\nMovie File එකක් Forward කරන්න, මම Link එකක් දෙන්නම්.")
 
-app = Application.builder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.VIDEO, handle_video))
-app.run_polling()
+@client.on(events.NewMessage)
+async def handle_forward(event):
+    # Forward කරපු File එකක්ද කියලා බලනවා
+    if not event.message.media:
+        return
+    if event.message.text and event.message.text.startswith('/'):
+        return
+
+    msg = await event.reply("Uploading... ⏳ ටිකක් ඉන්න, 774MB වගේ ලොකු File එකක් නිසා ටිකක් වෙලා යයි")
+    
+    # File එකේ නම හොයනවා
+    file_name = "movie.mp4"
+    if event.message.file:
+        file_name = event.message.file.name or f"{event.message.id}.mp4"
+    file_name = file_name.replace(" ", "_")
+    local_path = os.path.join(os.getcwd(), file_name)
+
+    try:
+        # Telethon එකෙන් ලොකු File එකත් බාගන්න පුළුවන්
+        await event.message.download_media(file=local_path)
+        
+        s3.upload_file(local_path, BUCKET, file_name)
+        link = f"{PUBLIC_URL}/{file_name}"
+        
+        await msg.edit(f"✅ Uploaded!\n\n🎬 {file_name}\n\n🔗 Link: {link}")
+        
+        if os.path.exists(local_path):
+            os.remove(local_path)
+            
+    except Exception as e:
+        await msg.edit(f"❌ Error: {e}")
+
+print("Bot Running... Forward ekak enakan balan innawa")
+client.run_until_disconnected()
